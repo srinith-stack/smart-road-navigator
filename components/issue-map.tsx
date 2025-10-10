@@ -15,10 +15,18 @@ export type IssueReport = {
   createdAt: number
 }
 
+type PolylineSpec = {
+  positions: Array<[number, number]>
+  color?: string
+  weight?: number
+  dashArray?: string
+}
+
 type IssueMapProps = {
   reports: IssueReport[]
   heightClass?: string
   children?: React.ReactNode
+  polylines?: PolylineSpec[] // new prop
 }
 
 function colorFor(t: ReportType) {
@@ -38,10 +46,11 @@ function colorFor(t: ReportType) {
   }
 }
 
-export default function IssueMap({ reports, heightClass = "h-[70dvh]", children }: IssueMapProps) {
+export default function IssueMap({ reports, heightClass = "h-[70dvh]", children, polylines = [] }: IssueMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
   const markersLayerRef = useRef<any>(null)
+  const linesLayerRef = useRef<any>(null) // layer for polylines
 
   // Telangana bounds and Hyderabad center
   const center: [number, number] = [17.385, 78.4867]
@@ -51,12 +60,10 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
   ]
 
   useEffect(() => {
-    // Inject Leaflet CSS/JS from CDN once
     function ensureLeaflet(): Promise<void> {
       return new Promise((resolve) => {
         const w = window as any
         if (w.L) return resolve()
-
         // CSS
         const cssId = "leaflet-css-cdn"
         if (!document.getElementById(cssId)) {
@@ -68,17 +75,14 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
           link.crossOrigin = ""
           document.head.appendChild(link)
         }
-
         // JS
         const jsId = "leaflet-js-cdn"
         if (document.getElementById(jsId)) {
-          // If script exists but L not ready yet, wait for load event
           const existing = document.getElementById(jsId) as HTMLScriptElement
           if ((window as any).L) return resolve()
           existing.addEventListener("load", () => resolve())
           return
         }
-
         const script = document.createElement("script")
         script.id = jsId
         script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -95,11 +99,9 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
     async function init() {
       await ensureLeaflet()
       if (disposed || !containerRef.current) return
-
       const L = (window as any).L
       if (!L) return
 
-      // Create map
       const map = L.map(containerRef.current, {
         center,
         zoom: 10,
@@ -114,20 +116,17 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
           '&copy; <a href="https://www.openstreetmap.org/" rel="noreferrer" target="_blank">OpenStreetMap</a> contributors',
       }).addTo(map)
 
-      // Marker layer group
       markersLayerRef.current = L.layerGroup().addTo(map)
+      linesLayerRef.current = L.layerGroup().addTo(map) // init polyline layer
 
-      // Initial draw
       drawMarkers(reports)
+      drawPolylines(polylines)
     }
 
     function drawMarkers(list: IssueReport[]) {
       const L = (window as any).L
       if (!L || !markersLayerRef.current) return
-
-      // Clear previous
       markersLayerRef.current.clearLayers()
-
       list.forEach((r) => {
         const color = colorFor(r.type)
         const marker = (window as any).L.circleMarker(r.position, {
@@ -149,6 +148,20 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
       })
     }
 
+    function drawPolylines(lines: PolylineSpec[]) {
+      const L = (window as any).L
+      if (!L || !linesLayerRef.current) return
+      linesLayerRef.current.clearLayers()
+      lines.forEach((line) => {
+        const pl = L.polyline(line.positions, {
+          color: line.color || "#2563eb",
+          weight: line.weight ?? 5,
+          dashArray: line.dashArray,
+        })
+        pl.addTo(linesLayerRef.current)
+      })
+    }
+
     init()
 
     return () => {
@@ -167,7 +180,6 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
   useEffect(() => {
     const L = (window as any).L
     if (!L || !markersLayerRef.current) return
-    // Rebuild markers with latest data
     markersLayerRef.current.clearLayers()
     reports.forEach((r) => {
       const color = colorFor(r.type)
@@ -189,6 +201,20 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children 
       m.addTo(markersLayerRef.current)
     })
   }, [reports])
+
+  useEffect(() => {
+    const L = (window as any).L
+    if (!L || !linesLayerRef.current) return
+    linesLayerRef.current.clearLayers()
+    polylines.forEach((line) => {
+      const pl = (window as any).L.polyline(line.positions, {
+        color: line.color || "#2563eb",
+        weight: line.weight ?? 5,
+        dashArray: line.dashArray,
+      })
+      pl.addTo(linesLayerRef.current)
+    })
+  }, [polylines])
 
   return (
     <div className={heightClass + " w-full"}>
