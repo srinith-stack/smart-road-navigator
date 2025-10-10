@@ -38,6 +38,8 @@ export default function NavigateView() {
   const [routeSafest, setRouteSafest] = useState<Array<[number, number]>>([])
   const [loadingRoute, setLoadingRoute] = useState(false)
   const [routeError, setRouteError] = useState<string | null>(null)
+  const [etaFastestSec, setEtaFastestSec] = useState<number | null>(null)
+  const [etaSafestSec, setEtaSafestSec] = useState<number | null>(null)
 
   const fromList = useMemo(() => {
     const q = from.trim().toLowerCase()
@@ -104,23 +106,31 @@ export default function NavigateView() {
 
   useEffect(() => {
     let abort = false
-    async function fetchRoute(
+    type RouteRes = { coords: [number, number][]; durationSec: number }
+
+    async function fetchRoutes(
       fromLat: number,
       fromLng: number,
       toLat: number,
       toLng: number,
-      opts?: { exclude?: string },
-    ) {
-      // OSRM expects lon,lat order
+      opts?: { alternatives?: boolean; exclude?: string },
+    ): Promise<RouteRes[]> {
       const base = "https://router.project-osrm.org/route/v1/driving"
-      const exclude = opts?.exclude ? `&exclude=${encodeURIComponent(opts.exclude)}` : ""
-      const url = `${base}/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&alternatives=false${exclude}`
+      const params = new URLSearchParams({
+        overview: "full",
+        geometries: "geojson",
+        alternatives: opts?.alternatives ? "true" : "false",
+      })
+      if (opts?.exclude) params.set("exclude", opts.exclude)
+      const url = `${base}/${fromLng},${fromLat};${toLng},${toLat}?${params.toString()}`
       const res = await fetch(url, { cache: "no-store" })
       if (!res.ok) throw new Error(`OSRM ${res.status}`)
       const json = await res.json()
-      const coords: [number, number][] =
-        json?.routes?.[0]?.geometry?.coordinates?.map((c: [number, number]) => [c[1], c[0]]) || []
-      return coords
+      const routes = (json?.routes ?? []) as Array<{ duration: number; geometry: { coordinates: [number, number][] } }>
+      return routes.map((r) => ({
+        durationSec: r.duration,
+        coords: (r.geometry?.coordinates ?? []).map((c) => [c[1], c[0]] as [number, number]),
+      }))
     }
 
     async function run() {
@@ -130,22 +140,59 @@ export default function NavigateView() {
       try {
         const [fLat, fLng] = fromCoord
         const [tLat, tLng] = toCoord
-        const [fastest, safest] = await Promise.allSettled([
-          fetchRoute(fLat, fLng, tLat, tLng),
-          // try to avoid motorways for a "safer" demo alternative
-          fetchRoute(fLat, fLng, tLat, tLng, { exclude: "motorway" }),
-        ])
+
+        // First try to get multiple alternatives
+        let fastest: RouteRes | null = null
+        let safest: RouteRes | null = null
+
+        const mainRoutes = await fetchRoutes(fLat, fLng, tLat, tLng, { alternatives: true })
+        if (mainRoutes.length > 0) {
+          // fastest by shortest duration
+          fastest = [...mainRoutes].sort((a, b) => a.durationSec - b.durationSec)[0]
+          // find an alternative that looks different from fastest
+          const alt = mainRoutes.find((r) => r !== fastest && routesLookDifferent(r.coords, fastest!.coords))
+          if (alt) safest = alt
+        }
+
+        // If no distinct safest, try exclude motorways
+        if (!safest) {
+          try {
+            const excluded = await fetchRoutes(fLat, fLng, tLat, tLng, { exclude: "motorway" })
+            if (excluded.length > 0) {
+              // pick first route from exclude; ensure distinct
+              const cand = excluded[0]
+              if (!fastest || routesLookDifferent(cand.coords, fastest.coords)) {
+                safest = cand
+              }
+            }
+          } catch {
+            // ignore, will fallback
+          }
+        }
+
+        // Fallbacks if OSRM didn’t return routes
+        if (!fastest) {
+          const approx = fallbackRoutes.fastest
+          fastest = { coords: approx, durationSec: approxETA(approx, 40) }
+        }
+        if (!safest) {
+          const approx = fallbackRoutes.safest
+          safest = { coords: approx, durationSec: approxETA(approx, 30) }
+        }
+
         if (!abort) {
-          setRouteFastest(
-            fastest.status === "fulfilled" && fastest.value.length ? fastest.value : fallbackRoutes.fastest,
-          )
-          setRouteSafest(safest.status === "fulfilled" && safest.value.length ? safest.value : fallbackRoutes.safest)
+          setRouteFastest(fastest.coords)
+          setRouteSafest(safest.coords)
+          setEtaFastestSec(fastest.durationSec ?? null)
+          setEtaSafestSec(safest.durationSec ?? null)
         }
       } catch (err: any) {
         if (!abort) {
           setRouteError("Could not fetch route. Showing approximate path.")
           setRouteFastest(fallbackRoutes.fastest)
           setRouteSafest(fallbackRoutes.safest)
+          setEtaFastestSec(approxETA(fallbackRoutes.fastest, 40))
+          setEtaSafestSec(approxETA(fallbackRoutes.safest, 30))
         }
       } finally {
         if (!abort) setLoadingRoute(false)
@@ -180,6 +227,56 @@ export default function NavigateView() {
     document.addEventListener("mousedown", onDocClick)
     return () => document.removeEventListener("mousedown", onDocClick)
   }, [])
+
+  function formatETA(sec: number | null) {
+    if (sec == null) return "—"
+    const minutes = Math.round(sec / 60)
+    if (minutes < 60) return `${minutes} min`
+    const h = Math.floor(minutes / 60)
+    const m = minutes % 60
+    return `${h} hr ${m} min`
+  }
+
+  function haversineMeters(a: [number, number], b: [number, number]) {
+    const R = 6371000
+    const toRad = (v: number) => (v * Math.PI) / 180
+    const dLat = toRad(b[0] - a[0])
+    const dLon = toRad(b[1] - a[1])
+    const lat1 = toRad(a[0])
+    const lat2 = toRad(b[0])
+    const sinDLat = Math.sin(dLat / 2)
+    const sinDLon = Math.sin(dLon / 2)
+    const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon
+    const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
+    return R * c
+  }
+
+  function polylineMeters(coords: Array<[number, number]>) {
+    let sum = 0
+    for (let i = 1; i < coords.length; i++) {
+      sum += haversineMeters(coords[i - 1], coords[i])
+    }
+    return sum
+  }
+
+  function approxETA(coords: Array<[number, number]>, speedKph: number) {
+    const m = polylineMeters(coords)
+    const km = m / 1000
+    const hours = km / speedKph
+    return Math.round(hours * 3600)
+  }
+
+  function routesLookDifferent(a: Array<[number, number]>, b: Array<[number, number]>) {
+    if (!a.length || !b.length) return false
+    // consider different if length differs by >10% or midpoints differ noticeably
+    const lenA = a.length
+    const lenB = b.length
+    if (Math.abs(lenA - lenB) / Math.max(1, Math.max(lenA, lenB)) > 0.1) return true
+    const midA = a[Math.floor(lenA / 2)]
+    const midB = b[Math.floor(lenB / 2)]
+    const midDist = haversineMeters(midA, midB)
+    return midDist > 250 // 250 meters apart around midpoint = different path
+  }
 
   return (
     <main className="min-h-dvh grid grid-rows-[auto,1fr]">
@@ -273,13 +370,15 @@ export default function NavigateView() {
                 <div className={cn("rounded-md border p-3", selected === "fastest" && "ring-2 ring-primary")}>
                   <p className="font-medium">🟢 Fastest Route</p>
                   <p className="text-sm text-muted-foreground">
-                    {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Time: 18 min
+                    {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Time:{" "}
+                    {formatETA(etaFastestSec)}
                   </p>
                 </div>
                 <div className={cn("rounded-md border p-3", selected === "safest" && "ring-2 ring-primary")}>
                   <p className="font-medium">🔵 Safest Route</p>
                   <p className="text-sm text-muted-foreground">
-                    {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Safety: 4.3/5
+                    {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Time:{" "}
+                    {formatETA(etaSafestSec)}
                   </p>
                 </div>
               </div>
