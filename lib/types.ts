@@ -1,4 +1,15 @@
-export type IssueType = "pothole" | "construction" | "flood" | "lowlight" | "accident"
+export type IssueType =
+  | "pothole"
+  | "crack"
+  | "construction"
+  | "flood"
+  | "lowlight"
+  | "accident"
+  | "speedbreaker"
+  | "blockage"
+  | "debris"
+  | "signal"
+  | "signage"
 export type IssueStatus = "pending" | "verified"
 
 export interface IssueReport {

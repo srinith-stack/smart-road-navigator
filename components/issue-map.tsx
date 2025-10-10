@@ -4,7 +4,18 @@ import type React from "react"
 
 import { useEffect, useRef } from "react"
 
-type ReportType = "pothole" | "construction" | "flood" | "lowlight" | "accident"
+type ReportType =
+  | "pothole"
+  | "construction"
+  | "flood"
+  | "lowlight"
+  | "accident"
+  | "crack"
+  | "speedbreaker"
+  | "blockage"
+  | "debris"
+  | "signal"
+  | "signage"
 
 export type IssueReport = {
   id: string
@@ -33,14 +44,26 @@ function colorFor(t: ReportType) {
   switch (t) {
     case "pothole":
       return "#ef4444" // red
+    case "crack":
+      return "#f97316" // orange-500
     case "construction":
-      return "#f59e0b" // orange
+      return "#f59e0b" // amber-500
     case "flood":
-      return "#3b82f6" // blue
+      return "#3b82f6" // blue-500
     case "lowlight":
-      return "#6b7280" // gray
+      return "#6b7280" // gray-500
     case "accident":
-      return "#e11d48" // rose
+      return "#e11d48" // rose-600
+    case "speedbreaker":
+      return "#10b981" // emerald-500
+    case "blockage":
+      return "#9333ea" // purple-600
+    case "debris":
+      return "#14b8a6" // teal-500
+    case "signal":
+      return "#dc2626" // red-600
+    case "signage":
+      return "#8b5cf6" // violet-500
     default:
       return "#111827"
   }

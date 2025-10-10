@@ -52,26 +52,12 @@ export default function HomePage() {
           <div className="rounded-lg border overflow-hidden">
             {/* Map/road graphic placeholder */}
             <Image
-              src={"/placeholder.svg?height=360&width=640&query=abstract%20map%20grid%20with%20roads"}
-              alt="Animated map illustration"
+              src={"/images/logo-mark.jpg"}
+              alt="Smart Road Navigator logo mark"
               width={640}
               height={360}
-              className="w-full h-auto"
+              className="w-full h-auto object-cover"
             />
-          </div>
-          <div className="rounded-lg border p-3">
-            {/* Faux explainer video area */}
-            <div className="aspect-video w-full rounded-md overflow-hidden bg-muted grid place-items-center">
-              <Image
-                src={"/placeholder.svg?height=360&width=640&query=product%20explainer%20video%20frame"}
-                alt="Explainer video placeholder"
-                width={640}
-                height={360}
-              />
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Auto-playing explainer video (placeholder). We can embed your video file or YouTube/Vimeo later.
-            </p>
           </div>
         </div>
       </section>

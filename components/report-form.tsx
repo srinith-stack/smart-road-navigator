@@ -177,10 +177,15 @@ export default function ReportForm() {
               <SelectContent>
                 <SelectItem value="pothole">Pothole</SelectItem>
                 <SelectItem value="crack">Crack</SelectItem>
-                <SelectItem value="flood">Flood</SelectItem>
+                <SelectItem value="flood">Flood / Waterlogging</SelectItem>
                 <SelectItem value="lowlight">Low Light</SelectItem>
                 <SelectItem value="accident">Accident</SelectItem>
                 <SelectItem value="construction">Road Construction</SelectItem>
+                <SelectItem value="speedbreaker">Speed Breaker</SelectItem>
+                <SelectItem value="blockage">Road Blockage</SelectItem>
+                <SelectItem value="debris">Debris on Road</SelectItem>
+                <SelectItem value="signal">Signal Failure</SelectItem>
+                <SelectItem value="signage">Missing/Bad Signage</SelectItem>
               </SelectContent>
             </Select>
           </div>
