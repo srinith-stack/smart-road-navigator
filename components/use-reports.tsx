@@ -28,6 +28,20 @@ const seed: IssueReport[] = [
   { id: "hyd-8", type: "debris", status: "verified", position: [17.36, 78.505], createdAt: Date.now() - 1800000 },
   { id: "hyd-9", type: "signal", status: "verified", position: [17.43, 78.49], createdAt: Date.now() - 1500000 },
   { id: "hyd-10", type: "signage", status: "verified", position: [17.35, 78.52], createdAt: Date.now() - 1200000 },
+  { id: "hyd-11", type: "pothole", status: "verified", position: [17.442, 78.391], createdAt: Date.now() - 1100000 },
+  { id: "hyd-12", type: "accident", status: "verified", position: [17.429, 78.408], createdAt: Date.now() - 900000 },
+  {
+    id: "hyd-13",
+    type: "construction",
+    status: "verified",
+    position: [17.365, 78.548],
+    createdAt: Date.now() - 800000,
+  },
+  { id: "hyd-14", type: "flood", status: "verified", position: [17.33, 78.52], createdAt: Date.now() - 700000 },
+  { id: "rr-3", type: "speedbreaker", status: "verified", position: [17.5, 78.35], createdAt: Date.now() - 600000 },
+  { id: "rr-4", type: "blockage", status: "verified", position: [17.29, 78.62], createdAt: Date.now() - 500000 },
+  { id: "khm-1", type: "signage", status: "verified", position: [17.247, 80.151], createdAt: Date.now() - 400000 }, // Khammam
+  { id: "kdm-1", type: "debris", status: "verified", position: [17.26, 78.27], createdAt: Date.now() - 300000 }, // Vikarabad side
 ]
 
 function readReports(): IssueReport[] {

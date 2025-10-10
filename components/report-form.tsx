@@ -191,6 +191,11 @@ export default function ReportForm() {
           </div>
 
           <div className="grid gap-2">
+            <Label htmlFor="photo">Photo (optional)</Label>
+            <Input id="photo" type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+          </div>
+
+          <div className="grid gap-2 mt-2">
             <Label>Location</Label>
             <div className="flex items-center gap-2">
               <Button type="button" size="sm" onClick={useCurrentLocation}>
@@ -206,7 +211,7 @@ export default function ReportForm() {
                 Clear selection
               </Button>
             </div>
-            <div className="rounded-md border overflow-hidden">
+            <div className="rounded-md border overflow-hidden relative z-0">
               <div ref={mapContainerRef} className="h-60 w-full" />
             </div>
             <p className="text-sm text-muted-foreground">
@@ -214,11 +219,6 @@ export default function ReportForm() {
                 ? `Selected: ${position[0].toFixed(5)}, ${position[1].toFixed(5)}`
                 : "Click on the map or use current location to select where the issue is."}
             </p>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="photo">Photo (optional)</Label>
-            <Input id="photo" type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
           </div>
         </CardContent>
         <CardFooter className="gap-2">

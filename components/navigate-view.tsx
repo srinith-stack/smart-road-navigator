@@ -34,6 +34,10 @@ export default function NavigateView() {
   const [showToSug, setShowToSug] = useState(false)
   const [selected, setSelected] = useState<"fastest" | "safest">("safest")
   const [confirmed, setConfirmed] = useState(false)
+  const [routeFastest, setRouteFastest] = useState<Array<[number, number]>>([])
+  const [routeSafest, setRouteSafest] = useState<Array<[number, number]>>([])
+  const [loadingRoute, setLoadingRoute] = useState(false)
+  const [routeError, setRouteError] = useState<string | null>(null)
 
   const fromList = useMemo(() => {
     const q = from.trim().toLowerCase()
@@ -67,7 +71,7 @@ export default function NavigateView() {
   }
 
   // Compute demo routes between fromCoord and toCoord (straight line vs offset)
-  const routes = useMemo(() => {
+  const fallbackRoutes = useMemo(() => {
     const fallback: Array<[number, number]> = [
       [17.385044, 78.486671],
       [17.392, 78.49],
@@ -84,13 +88,10 @@ export default function NavigateView() {
         ] as Array<[number, number]>,
       }
     }
-
     const [lat1, lng1] = fromCoord
     const [lat2, lng2] = toCoord
     const mid: [number, number] = [(lat1 + lat2) / 2, (lng1 + lng2) / 2]
-    // fastest: straight-ish line through midpoint
     const fastest: Array<[number, number]> = [fromCoord, mid, toCoord]
-    // safest: offset by a tiny amount to simulate detour
     const offset = 0.01
     const safest: Array<[number, number]> = [
       fromCoord,
@@ -100,6 +101,61 @@ export default function NavigateView() {
     ]
     return { fastest, safest }
   }, [fromCoord, toCoord])
+
+  useEffect(() => {
+    let abort = false
+    async function fetchRoute(
+      fromLat: number,
+      fromLng: number,
+      toLat: number,
+      toLng: number,
+      opts?: { exclude?: string },
+    ) {
+      // OSRM expects lon,lat order
+      const base = "https://router.project-osrm.org/route/v1/driving"
+      const exclude = opts?.exclude ? `&exclude=${encodeURIComponent(opts.exclude)}` : ""
+      const url = `${base}/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&alternatives=false${exclude}`
+      const res = await fetch(url, { cache: "no-store" })
+      if (!res.ok) throw new Error(`OSRM ${res.status}`)
+      const json = await res.json()
+      const coords: [number, number][] =
+        json?.routes?.[0]?.geometry?.coordinates?.map((c: [number, number]) => [c[1], c[0]]) || []
+      return coords
+    }
+
+    async function run() {
+      if (!confirmed || !fromCoord || !toCoord) return
+      setLoadingRoute(true)
+      setRouteError(null)
+      try {
+        const [fLat, fLng] = fromCoord
+        const [tLat, tLng] = toCoord
+        const [fastest, safest] = await Promise.allSettled([
+          fetchRoute(fLat, fLng, tLat, tLng),
+          // try to avoid motorways for a "safer" demo alternative
+          fetchRoute(fLat, fLng, tLat, tLng, { exclude: "motorway" }),
+        ])
+        if (!abort) {
+          setRouteFastest(
+            fastest.status === "fulfilled" && fastest.value.length ? fastest.value : fallbackRoutes.fastest,
+          )
+          setRouteSafest(safest.status === "fulfilled" && safest.value.length ? safest.value : fallbackRoutes.safest)
+        }
+      } catch (err: any) {
+        if (!abort) {
+          setRouteError("Could not fetch route. Showing approximate path.")
+          setRouteFastest(fallbackRoutes.fastest)
+          setRouteSafest(fallbackRoutes.safest)
+        }
+      } finally {
+        if (!abort) setLoadingRoute(false)
+      }
+    }
+    run()
+    return () => {
+      abort = true
+    }
+  }, [confirmed, fromCoord, toCoord, fallbackRoutes])
 
   const DynamicIssueMap = useMemo(() => {
     if (typeof window === "undefined") {
@@ -234,6 +290,9 @@ export default function NavigateView() {
           </CardContent>
         </Card>
 
+        {routeError ? <p className="text-sm text-destructive">{routeError}</p> : null}
+        {loadingRoute && confirmed ? <p className="text-sm text-muted-foreground">Fetching route…</p> : null}
+
         <div className="rounded-lg border overflow-hidden">
           <DynamicIssueMap
             reports={[]}
@@ -242,18 +301,18 @@ export default function NavigateView() {
               confirmed
                 ? [
                     {
-                      positions: routes.fastest,
+                      positions: routeFastest.length ? routeFastest : fallbackRoutes.fastest,
                       color: selected === "fastest" ? "#16a34a" : "#9ca3af",
                       weight: 5,
                     },
                     {
-                      positions: routes.safest,
+                      positions: routeSafest.length ? routeSafest : fallbackRoutes.safest,
                       color: selected === "safest" ? "#2563eb" : "#9ca3af",
                       weight: 5,
                       dashArray: "6 8",
                     },
                   ]
-                : [] // wait for confirmation before drawing
+                : []
             }
           />
         </div>

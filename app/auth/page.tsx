@@ -12,6 +12,9 @@ import { Label } from "@/components/ui/label"
 const DEMO_USERS = [
   { email: "user1@smartroad.in", password: "User@123" },
   { email: "user2@smartroad.in", password: "User@123" },
+  { email: "user3@smartroad.in", password: "User@123" },
+  { email: "user4@smartroad.in", password: "User@123" },
+  { email: "user5@smartroad.in", password: "User@123" },
 ]
 
 export default function AuthPage() {
@@ -105,8 +108,9 @@ export default function AuthPage() {
         </CardContent>
         <CardFooter className="flex flex-col items-start gap-1">
           <p className="text-xs text-muted-foreground">Demo user credentials:</p>
-          <code className="text-xs">user1@smartroad.in / User@123</code>
-          <code className="text-xs">user2@smartroad.in / User@123</code>
+          {DEMO_USERS.map((u) => (
+            <code key={u.email} className="text-xs">{`${u.email} / ${u.password}`}</code>
+          ))}
         </CardFooter>
       </Card>
     </main>
