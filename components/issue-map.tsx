@@ -37,7 +37,9 @@ type IssueMapProps = {
   reports: IssueReport[]
   heightClass?: string
   children?: React.ReactNode
-  polylines?: PolylineSpec[] // new prop
+  polylines?: PolylineSpec[]
+  currentLocation?: [number, number]
+  followCurrent?: boolean
 }
 
 function colorFor(t: ReportType) {
@@ -69,13 +71,55 @@ function colorFor(t: ReportType) {
   }
 }
 
-export default function IssueMap({ reports, heightClass = "h-[70dvh]", children, polylines = [] }: IssueMapProps) {
+function drawMarkers(reports: IssueReport[], markersLayerRef: any) {
+  const L = (window as any).L
+  reports.forEach((r) => {
+    const color = colorFor(r.type)
+    const m = L.circleMarker(r.position, {
+      radius: 9,
+      color,
+      fillColor: color,
+      fillOpacity: 0.6,
+      weight: 2,
+    })
+    m.bindTooltip(
+      `<div style="font-size:12px;">
+        <div style="font-weight:600;text-transform:capitalize;">${r.type}</div>
+        <div>Status: ${r.status}</div>
+        <div>${r.position[0].toFixed(4)}, ${r.position[1].toFixed(4)}</div>
+      </div>`,
+      { sticky: true },
+    )
+    m.addTo(markersLayerRef)
+  })
+}
+
+function drawPolylines(polylines: PolylineSpec[], linesLayerRef: any) {
+  const L = (window as any).L
+  polylines.forEach((line) => {
+    const pl = L.polyline(line.positions, {
+      color: line.color || "#2563eb",
+      weight: line.weight ?? 5,
+      dashArray: line.dashArray,
+    })
+    pl.addTo(linesLayerRef)
+  })
+}
+
+export default function IssueMap({
+  reports,
+  heightClass = "h-[70dvh]",
+  children,
+  polylines = [],
+  currentLocation,
+  followCurrent = false,
+}: IssueMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
   const markersLayerRef = useRef<any>(null)
-  const linesLayerRef = useRef<any>(null) // layer for polylines
+  const linesLayerRef = useRef<any>(null)
+  const currentLayerRef = useRef<any>(null)
 
-  // Telangana bounds and Hyderabad center
   const center: [number, number] = [17.385, 78.4867]
   const bounds: [[number, number], [number, number]] = [
     [15.8, 77.0],
@@ -87,7 +131,6 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children,
       return new Promise((resolve) => {
         const w = window as any
         if (w.L) return resolve()
-        // CSS
         const cssId = "leaflet-css-cdn"
         if (!document.getElementById(cssId)) {
           const link = document.createElement("link")
@@ -98,7 +141,6 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children,
           link.crossOrigin = ""
           document.head.appendChild(link)
         }
-        // JS
         const jsId = "leaflet-js-cdn"
         if (document.getElementById(jsId)) {
           const existing = document.getElementById(jsId) as HTMLScriptElement
@@ -140,49 +182,11 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children,
       }).addTo(map)
 
       markersLayerRef.current = L.layerGroup().addTo(map)
-      linesLayerRef.current = L.layerGroup().addTo(map) // init polyline layer
+      linesLayerRef.current = L.layerGroup().addTo(map)
+      currentLayerRef.current = L.layerGroup().addTo(map)
 
-      drawMarkers(reports)
-      drawPolylines(polylines)
-    }
-
-    function drawMarkers(list: IssueReport[]) {
-      const L = (window as any).L
-      if (!L || !markersLayerRef.current) return
-      markersLayerRef.current.clearLayers()
-      list.forEach((r) => {
-        const color = colorFor(r.type)
-        const marker = (window as any).L.circleMarker(r.position, {
-          radius: 9,
-          color,
-          fillColor: color,
-          fillOpacity: 0.6,
-          weight: 2,
-        })
-        marker.bindTooltip(
-          `<div style="font-size:12px;">
-            <div style="font-weight:600;text-transform:capitalize;">${r.type}</div>
-            <div>Status: ${r.status}</div>
-            <div>${r.position[0].toFixed(4)}, ${r.position[1].toFixed(4)}</div>
-          </div>`,
-          { sticky: true },
-        )
-        marker.addTo(markersLayerRef.current)
-      })
-    }
-
-    function drawPolylines(lines: PolylineSpec[]) {
-      const L = (window as any).L
-      if (!L || !linesLayerRef.current) return
-      linesLayerRef.current.clearLayers()
-      lines.forEach((line) => {
-        const pl = L.polyline(line.positions, {
-          color: line.color || "#2563eb",
-          weight: line.weight ?? 5,
-          dashArray: line.dashArray,
-        })
-        pl.addTo(linesLayerRef.current)
-      })
+      drawMarkers(reports, markersLayerRef.current)
+      drawPolylines(polylines, linesLayerRef.current)
     }
 
     init()
@@ -196,52 +200,44 @@ export default function IssueMap({ reports, heightClass = "h-[70dvh]", children,
         }
       } catch {}
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Redraw markers when reports change
   useEffect(() => {
     const L = (window as any).L
     if (!L || !markersLayerRef.current) return
     markersLayerRef.current.clearLayers()
-    reports.forEach((r) => {
-      const color = colorFor(r.type)
-      const m = L.circleMarker(r.position, {
-        radius: 9,
-        color,
-        fillColor: color,
-        fillOpacity: 0.6,
-        weight: 2,
-      })
-      m.bindTooltip(
-        `<div style="font-size:12px;">
-          <div style="font-weight:600;text-transform:capitalize;">${r.type}</div>
-          <div>Status: ${r.status}</div>
-          <div>${r.position[0].toFixed(4)}, ${r.position[1].toFixed(4)}</div>
-        </div>`,
-        { sticky: true },
-      )
-      m.addTo(markersLayerRef.current)
-    })
+    drawMarkers(reports, markersLayerRef.current)
   }, [reports])
 
   useEffect(() => {
     const L = (window as any).L
     if (!L || !linesLayerRef.current) return
     linesLayerRef.current.clearLayers()
-    polylines.forEach((line) => {
-      const pl = (window as any).L.polyline(line.positions, {
-        color: line.color || "#2563eb",
-        weight: line.weight ?? 5,
-        dashArray: line.dashArray,
-      })
-      pl.addTo(linesLayerRef.current)
-    })
+    drawPolylines(polylines, linesLayerRef.current)
   }, [polylines])
 
+  useEffect(() => {
+    const L = (window as any).L
+    if (!L || !currentLayerRef.current) return
+    currentLayerRef.current.clearLayers()
+    if (currentLocation) {
+      const m = L.circleMarker(currentLocation, {
+        radius: 8,
+        color: "#16a34a",
+        fillColor: "#16a34a",
+        fillOpacity: 0.9,
+        weight: 2,
+      })
+      m.addTo(currentLayerRef.current)
+      if (followCurrent && mapRef.current) {
+        mapRef.current.panTo(currentLocation)
+      }
+    }
+  }, [currentLocation, followCurrent])
+
   return (
-    <div className={heightClass + " w-full"}>
-      <div ref={containerRef} className="h-full w-full rounded-md overflow-hidden border" />
+    <div className={(heightClass + " w-full").trim()}>
+      <div ref={containerRef} className="h-full w-full rounded-md overflow-hidden border z-0 relative" />
       {children}
     </div>
   )

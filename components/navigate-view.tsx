@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import dynamic from "next/dynamic"
+import { useReports } from "@/components/use-reports"
 
 export default function NavigateView() {
   // Suggested Telangana/Hyderabad places with lat/lng
@@ -32,26 +33,97 @@ export default function NavigateView() {
   const [toCoord, setToCoord] = useState<[number, number] | null>(null)
   const [showFromSug, setShowFromSug] = useState(false)
   const [showToSug, setShowToSug] = useState(false)
-  const [selected, setSelected] = useState<"fastest" | "safest">("safest")
+  const selected = "safest"
   const [confirmed, setConfirmed] = useState(false)
-  const [routeFastest, setRouteFastest] = useState<Array<[number, number]>>([])
   const [routeSafest, setRouteSafest] = useState<Array<[number, number]>>([])
   const [loadingRoute, setLoadingRoute] = useState(false)
   const [routeError, setRouteError] = useState<string | null>(null)
-  const [etaFastestSec, setEtaFastestSec] = useState<number | null>(null)
   const [etaSafestSec, setEtaSafestSec] = useState<number | null>(null)
 
+  const { reports } = useReports()
+
+  // Remote suggestions from Nominatim (Telangana-bounded)
+  type RemotePlace = { name: string; display: string; coord: [number, number] }
+  const [fromRemote, setFromRemote] = useState<RemotePlace[]>([])
+  const [toRemote, setToRemote] = useState<RemotePlace[]>([])
+  const telanganaViewbox = "77.0,19.6,81.3,15.8" // left,top,right,bottom
+
+  async function searchPlaces(q: string): Promise<RemotePlace[]> {
+    if (!q || q.trim().length < 3) return []
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(
+      q,
+    )}&viewbox=${telanganaViewbox}&bounded=1&countrycodes=in&limit=6`
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { "Accept-Language": "en-IN", "User-Agent": "Smart Road Navigator (demo)" },
+    })
+    if (!res.ok) return []
+    const data = (await res.json()) as Array<any>
+    return (data || []).map((d) => ({
+      name: d.display_name?.split(",")[0] ?? d.name ?? "Unknown",
+      display: d.display_name ?? d.name ?? "Unknown",
+      coord: [Number.parseFloat(d.lat), Number.parseFloat(d.lon)] as [number, number],
+    }))
+  }
+
+  // Debounce From search
+  useEffect(() => {
+    let cancel = false
+    const q = from.trim()
+    if (q.length < 3) {
+      setFromRemote([])
+      return
+    }
+    const id = setTimeout(async () => {
+      try {
+        const results = await searchPlaces(q)
+        if (!cancel) setFromRemote(results)
+      } catch {
+        if (!cancel) setFromRemote([])
+      }
+    }, 250)
+    return () => {
+      cancel = true
+      clearTimeout(id)
+    }
+  }, [from])
+
+  // Debounce To search
+  useEffect(() => {
+    let cancel = false
+    const q = to.trim()
+    if (q.length < 3) {
+      setToRemote([])
+      return
+    }
+    const id = setTimeout(async () => {
+      try {
+        const results = await searchPlaces(q)
+        if (!cancel) setToRemote(results)
+      } catch {
+        if (!cancel) setToRemote([])
+      }
+    }, 250)
+    return () => {
+      cancel = true
+      clearTimeout(id)
+    }
+  }, [to])
+
+  // Merge local + remote suggestions
   const fromList = useMemo(() => {
     const q = from.trim().toLowerCase()
-    if (!q) return places.slice(0, 5)
-    return places.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6)
-  }, [from, places])
+    const local = !q ? places.slice(0, 5) : places.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 3)
+    const remote = fromRemote.map((r) => ({ name: r.name, coord: r.coord as [number, number] }))
+    return [...remote, ...local].slice(0, 6)
+  }, [from, places, fromRemote])
 
   const toList = useMemo(() => {
     const q = to.trim().toLowerCase()
-    if (!q) return places.slice(0, 5)
-    return places.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6)
-  }, [to, places])
+    const local = !q ? places.slice(0, 5) : places.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 3)
+    const remote = toRemote.map((r) => ({ name: r.name, coord: r.coord as [number, number] }))
+    return [...remote, ...local].slice(0, 6)
+  }, [to, places, toRemote])
 
   function pickFrom(p: { name: string; coord: [number, number] }) {
     setFrom(p.name)
@@ -106,7 +178,7 @@ export default function NavigateView() {
 
   useEffect(() => {
     let abort = false
-    type RouteRes = { coords: [number, number][]; durationSec: number }
+    type RouteRes = { coords: [number, number][]; durationSec: number; distanceM?: number }
 
     async function fetchRoutes(
       fromLat: number,
@@ -115,22 +187,59 @@ export default function NavigateView() {
       toLng: number,
       opts?: { alternatives?: boolean; exclude?: string },
     ): Promise<RouteRes[]> {
-      const base = "https://router.project-osrm.org/route/v1/driving"
+      const bases = [
+        "https://router.project-osrm.org/route/v1/driving",
+        "https://routing.openstreetmap.de/routed-car/route/v1/driving",
+      ]
       const params = new URLSearchParams({
         overview: "full",
         geometries: "geojson",
         alternatives: opts?.alternatives ? "true" : "false",
+        annotations: "duration,distance",
       })
       if (opts?.exclude) params.set("exclude", opts.exclude)
-      const url = `${base}/${fromLng},${fromLat};${toLng},${toLat}?${params.toString()}`
-      const res = await fetch(url, { cache: "no-store" })
-      if (!res.ok) throw new Error(`OSRM ${res.status}`)
-      const json = await res.json()
-      const routes = (json?.routes ?? []) as Array<{ duration: number; geometry: { coordinates: [number, number][] } }>
-      return routes.map((r) => ({
-        durationSec: r.duration,
-        coords: (r.geometry?.coordinates ?? []).map((c) => [c[1], c[0]] as [number, number]),
-      }))
+
+      for (const base of bases) {
+        try {
+          const url = `${base}/${fromLng},${fromLat};${toLng},${toLat}?${params.toString()}`
+          const res = await fetch(url, { cache: "no-store" })
+          if (!res.ok) continue
+          const json = await res.json()
+          const routes = (json?.routes ?? []) as Array<{
+            duration: number
+            distance: number
+            geometry: { coordinates: [number, number][] }
+          }>
+          if (routes.length > 0) {
+            return routes.map((r) => ({
+              durationSec: r.duration,
+              distanceM: r.distance,
+              coords: (r.geometry?.coordinates ?? []).map((c) => [c[1], c[0]] as [number, number]),
+            }))
+          }
+        } catch {
+          // try next base
+        }
+      }
+      return []
+    }
+
+    function pickSafest(cands: RouteRes[]): RouteRes | null {
+      if (cands.length === 0) return null
+      let best: RouteRes | null = null
+      let bestScore = Number.POSITIVE_INFINITY
+      for (const r of cands) {
+        const score = routeHazardScore(r.coords)
+        if (
+          score < bestScore ||
+          (score === bestScore && best && r.durationSec < best.durationSec) ||
+          (score === bestScore && !best)
+        ) {
+          best = r
+          bestScore = score
+        }
+      }
+      return best
     }
 
     async function run() {
@@ -141,57 +250,41 @@ export default function NavigateView() {
         const [fLat, fLng] = fromCoord
         const [tLat, tLng] = toCoord
 
-        // First try to get multiple alternatives
-        let fastest: RouteRes | null = null
-        let safest: RouteRes | null = null
+        const candidates: RouteRes[] = []
 
+        // Try to get multiple alternatives
         const mainRoutes = await fetchRoutes(fLat, fLng, tLat, tLng, { alternatives: true })
-        if (mainRoutes.length > 0) {
-          // fastest by shortest duration
-          fastest = [...mainRoutes].sort((a, b) => a.durationSec - b.durationSec)[0]
-          // find an alternative that looks different from fastest
-          const alt = mainRoutes.find((r) => r !== fastest && routesLookDifferent(r.coords, fastest!.coords))
-          if (alt) safest = alt
-        }
+        candidates.push(...mainRoutes)
 
-        // If no distinct safest, try exclude motorways
-        if (!safest) {
-          try {
-            const excluded = await fetchRoutes(fLat, fLng, tLat, tLng, { exclude: "motorway" })
-            if (excluded.length > 0) {
-              // pick first route from exclude; ensure distinct
-              const cand = excluded[0]
-              if (!fastest || routesLookDifferent(cand.coords, fastest.coords)) {
-                safest = cand
-              }
-            }
-          } catch {
-            // ignore, will fallback
-          }
-        }
+        // Try excluding motorways (often a different path)
+        const excluded = await fetchRoutes(fLat, fLng, tLat, tLng, { exclude: "motorway" })
+        candidates.push(...excluded)
 
-        // Fallbacks if OSRM didn’t return routes
-        if (!fastest) {
-          const approx = fallbackRoutes.fastest
-          fastest = { coords: approx, durationSec: approxETA(approx, 40) }
-        }
+        // Deduplicate by geometry length signature to avoid identical routes
+        const seen = new Set<string>()
+        const unique = candidates.filter((r) => {
+          const sig = `${r.coords.length}:${Math.round((r.distanceM || 0) / 10)}:${Math.round(r.durationSec)}`
+          if (seen.has(sig)) return false
+          seen.add(sig)
+          return true
+        })
+
+        let safest: RouteRes | null = pickSafest(unique)
+
+        // As a last resort, fallback to approximate (kept for resiliency)
         if (!safest) {
           const approx = fallbackRoutes.safest
           safest = { coords: approx, durationSec: approxETA(approx, 30) }
         }
 
-        if (!abort) {
-          setRouteFastest(fastest.coords)
+        if (!abort && safest) {
           setRouteSafest(safest.coords)
-          setEtaFastestSec(fastest.durationSec ?? null)
           setEtaSafestSec(safest.durationSec ?? null)
         }
       } catch (err: any) {
         if (!abort) {
-          setRouteError("Could not fetch route. Showing approximate path.")
-          setRouteFastest(fallbackRoutes.fastest)
+          setRouteError("Could not fetch road route. Showing approximate path.")
           setRouteSafest(fallbackRoutes.safest)
-          setEtaFastestSec(approxETA(fallbackRoutes.fastest, 40))
           setEtaSafestSec(approxETA(fallbackRoutes.safest, 30))
         }
       } finally {
@@ -202,7 +295,37 @@ export default function NavigateView() {
     return () => {
       abort = true
     }
-  }, [confirmed, fromCoord, toCoord, fallbackRoutes])
+  }, [confirmed, fromCoord, toCoord, fallbackRoutes, reports])
+
+  // Live navigation via Geolocation.watchPosition
+  const [navigating, setNavigating] = useState(false)
+  const [currentLoc, setCurrentLoc] = useState<[number, number] | null>(null)
+  const watchIdRef = useRef<number | null>(null)
+
+  function startNavigation() {
+    if (!confirmed) return
+    if (!navigator.geolocation) return
+    if (watchIdRef.current != null) return
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        setCurrentLoc([pos.coords.latitude, pos.coords.longitude])
+      },
+      () => {
+        // fail silently
+      },
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 10_000 },
+    )
+    watchIdRef.current = id
+    setNavigating(true)
+  }
+
+  function stopNavigation() {
+    if (watchIdRef.current != null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+    }
+    watchIdRef.current = null
+    setNavigating(false)
+  }
 
   const DynamicIssueMap = useMemo(() => {
     if (typeof window === "undefined") {
@@ -239,16 +362,15 @@ export default function NavigateView() {
 
   function haversineMeters(a: [number, number], b: [number, number]) {
     const R = 6371000
-    const toRad = (v: number) => (v * Math.PI) / 180
+    const toRad = (x: number) => (x * Math.PI) / 180
     const dLat = toRad(b[0] - a[0])
-    const dLon = toRad(b[1] - a[1])
+    const dLng = toRad(b[1] - a[1])
     const lat1 = toRad(a[0])
     const lat2 = toRad(b[0])
     const sinDLat = Math.sin(dLat / 2)
-    const sinDLon = Math.sin(dLon / 2)
-    const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon
-    const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
-    return R * c
+    const sinDLng = Math.sin(dLng / 2)
+    const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng
+    return 2 * R * Math.asin(Math.sqrt(h))
   }
 
   function polylineMeters(coords: Array<[number, number]>) {
@@ -266,16 +388,27 @@ export default function NavigateView() {
     return Math.round(hours * 3600)
   }
 
-  function routesLookDifferent(a: Array<[number, number]>, b: Array<[number, number]>) {
-    if (!a.length || !b.length) return false
-    // consider different if length differs by >10% or midpoints differ noticeably
-    const lenA = a.length
-    const lenB = b.length
-    if (Math.abs(lenA - lenB) / Math.max(1, Math.max(lenA, lenB)) > 0.1) return true
-    const midA = a[Math.floor(lenA / 2)]
-    const midB = b[Math.floor(lenB / 2)]
-    const midDist = haversineMeters(midA, midB)
-    return midDist > 250 // 250 meters apart around midpoint = different path
+  // Consider these report types as hazards to avoid
+  const hazardTypes = new Set(["pothole", "accident", "flood", "blockage", "debris", "speedbreaker"])
+  const hazardPoints = reports.filter((r) => hazardTypes.has(r.type)).map((r) => r.position)
+
+  function routeHazardScore(coords: [number, number][]) {
+    if (hazardPoints.length === 0 || coords.length === 0) return 0
+    // Sample every Nth point to keep it fast
+    const step = Math.max(1, Math.floor(coords.length / 200))
+    let score = 0
+    for (let i = 0; i < coords.length; i += step) {
+      const p = coords[i]
+      for (let j = 0; j < hazardPoints.length; j++) {
+        const d = haversineMeters(p, hazardPoints[j] as [number, number])
+        if (d < 50) {
+          // within 50m of a hazard point
+          score += 1
+          break
+        }
+      }
+    }
+    return score
   }
 
   return (
@@ -356,25 +489,25 @@ export default function NavigateView() {
               )}
             </div>
 
-            <div className="flex gap-2 items-start md:items-stretch">
+            {/* <div className="flex gap-2 items-start md:items-stretch">
               <Button variant={selected === "fastest" ? "default" : "secondary"} onClick={() => setSelected("fastest")}>
                 Fastest
               </Button>
               <Button variant={selected === "safest" ? "default" : "secondary"} onClick={() => setSelected("safest")}>
                 Safest
               </Button>
-            </div>
+            </div> */}
 
             <div className="md:col-span-3 flex items-center justify-between gap-2">
               <div className="grid grid-cols-2 gap-3 flex-1">
-                <div className={cn("rounded-md border p-3", selected === "fastest" && "ring-2 ring-primary")}>
+                {/* <div className={cn("rounded-md border p-3", selected === "fastest" && "ring-2 ring-primary")}>
                   <p className="font-medium">🟢 Fastest Route</p>
                   <p className="text-sm text-muted-foreground">
                     {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Time:{" "}
                     {formatETA(etaFastestSec)}
                   </p>
-                </div>
-                <div className={cn("rounded-md border p-3", selected === "safest" && "ring-2 ring-primary")}>
+                </div> */}
+                <div className={cn("rounded-md border p-3", true && "ring-2 ring-primary")}>
                   <p className="font-medium">🔵 Safest Route</p>
                   <p className="text-sm text-muted-foreground">
                     {fromCoord && toCoord ? "Based on your selection" : "Sample route"} • Time:{" "}
@@ -394,25 +527,22 @@ export default function NavigateView() {
 
         <div className="rounded-lg border overflow-hidden">
           <DynamicIssueMap
-            reports={[]}
+            reports={reports}
             heightClass="h-[60dvh]"
             polylines={
               confirmed
                 ? [
                     {
-                      positions: routeFastest.length ? routeFastest : fallbackRoutes.fastest,
-                      color: selected === "fastest" ? "#16a34a" : "#9ca3af",
-                      weight: 5,
-                    },
-                    {
                       positions: routeSafest.length ? routeSafest : fallbackRoutes.safest,
-                      color: selected === "safest" ? "#2563eb" : "#9ca3af",
+                      color: "#2563eb",
                       weight: 5,
                       dashArray: "6 8",
                     },
                   ]
                 : []
             }
+            currentLocation={currentLoc ?? undefined}
+            followCurrent={navigating}
           />
         </div>
 
@@ -420,7 +550,13 @@ export default function NavigateView() {
           <p className="text-sm text-muted-foreground">
             {confirmed ? "Route confirmed. Voice guidance enabled." : "Pick places and confirm to see the route."}
           </p>
-          <Button disabled={!confirmed}>Start Navigation</Button>
+          {navigating ? (
+            <Button onClick={stopNavigation}>Stop Navigation</Button>
+          ) : (
+            <Button onClick={startNavigation} disabled={!confirmed}>
+              Start Navigation
+            </Button>
+          )}
         </div>
       </section>
     </main>
